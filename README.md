@@ -1,12 +1,13 @@
 # 📈 Microwave Resonator Q-Factor & Background Analysis
 
-An interactive web application built with **Streamlit**, **SciPy**, and **Plotly** for automated fitting, background subtraction, and Q-factor extraction ($Q_{in}$, $Q_L$, $Q_{ex}$) of microwave resonator frequency sweeps across varying temperatures.
+An interactive web application built with **Streamlit**, **SciPy**, and **Plotly** for automated fitting, background subtraction, and Q-factor extraction ($Q_{in}$, $Q_L$, $Q_{ex}$) of microwave resonator frequency sweeps across varying temperatures. 
 
 ![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)
 ![Streamlit](https://img.shields.io/badge/Streamlit-App-red.svg)
 ![Plotly](https://img.shields.io/badge/Plotly-Interactive--Plots-brightgreen.svg)
 ![SciPy](https://img.shields.io/badge/SciPy-Optimization--%26--Fitting-green.svg)
 
+* Gemini Helps a lot for the app interface *
 ---
 
 ## 🌟 Key Features
