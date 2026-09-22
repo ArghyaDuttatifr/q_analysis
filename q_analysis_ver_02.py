@@ -19,19 +19,37 @@ st.title("📈 Resonator Q-Factor & Background Analysis")
 # SIDEBAR: CONTROLS & INPUTS
 # ==========================================
 st.sidebar.header("1. Data Upload")
+
+# Dynamic session state key for widget reset
+if "uploader_key" not in st.session_state:
+    st.session_state["uploader_key"] = 0
+
 uploaded_files = st.sidebar.file_uploader(
     "Upload S12 Sweep Files (.txt, .csv)", 
     accept_multiple_files=True, 
-    type=['txt', 'csv']
+    type=['txt', 'csv'],
+    key=f"uploader_{st.session_state['uploader_key']}"
 )
+
+# Reset Button
+if st.sidebar.button("🗑️ Reset / Clear All Files", use_container_width=True):
+    st.session_state["uploader_key"] += 1
+    # Clear any stored analysis data
+    for key in ['master_results', 'individual_plots_data', 'bg_combined']:
+        if key in st.session_state:
+            del st.session_state[key]
+    st.rerun()
 
 st.sidebar.header("2. Filtering & Options")
 FILE_PREFIX = st.sidebar.text_input("File Prefix Filter", value="S12")
 col1, col2 = st.sidebar.columns(2)
-T_min = col1.number_input("T min (K)", value=0.0, step=0.1)
-T_max = col2.number_input("T max (K)", value=300.0, step=0.1)
 
-bg_correction = st.sidebar.checkbox("Enable Background Subtraction", value=True, 
+# Set T_min to 2.0 K and T_max to 15.0 K by default
+T_min = col1.number_input("T min (K)", value=2.0, step=0.1)
+T_max = col2.number_input("T max (K)", value=15.0, step=0.1)
+
+# Disabled background subtraction by default (value=False)
+bg_correction = st.sidebar.checkbox("Enable Background Subtraction", value=False, 
     help="Uses the previous temperature's fitted background before fitting the next one.")
 
 restrict_rows = st.sidebar.checkbox("Restrict Row Range")
@@ -157,13 +175,12 @@ def create_plotly_bg(T, freq, background):
     
     fig.update_layout(title=f"Background for T = {T} K", xaxis_title="Frequency (GHz)", yaxis_title="Background Magnitude",
                       hovermode="x unified", template="plotly_white", margin=dict(l=20, r=20, t=40, b=20))
-    # Add horizontal zero line
     fig.add_hline(y=0, line_dash="dash", line_color="gray")
     return fig
 
 
 # ==========================================
-# MAIN EXECUTION
+# MAIN EXECUTION (AUTOMATIC RUN ON UPLOAD)
 # ==========================================
 if uploaded_files:
     entries = []
@@ -185,19 +202,14 @@ if uploaded_files:
     if not entries:
         st.warning(f"No matching files found in T range [{T_min}, {T_max}] with prefix '{FILE_PREFIX}'.")
     else:
-        # We use session state so the app doesn't re-run the heavy math every time you click a tab
-        if st.button("🚀 Run Analysis", use_container_width=True, type="primary"):
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
+        # Automatic processing without requiring a button click
+        with st.spinner(f"Analyzing {len(entries)} sweep dataset(s)..."):
             freq_prev, background_prev = None, None
             master_results = []
             bg_vs_temp_data = []
             individual_plots_data = {}
             
             for idx, (T, file) in enumerate(entries):
-                status_text.text(f"Processing T = {T} K ({idx+1}/{len(entries)})")
-                
                 # Read data
                 file.seek(0)
                 raw_data = np.genfromtxt(file, delimiter=',', skip_header=1)
@@ -265,28 +277,16 @@ if uploaded_files:
                     }
                     
                     bg_vs_temp_data.append(np.column_stack([np.full_like(freq_full[start_idx:end_idx], T), freq_full[start_idx:end_idx], background_out[start_idx:end_idx]]))
-                
-                progress_bar.progress((idx + 1) / len(entries))
             
-            # Save final results into session state to render dashboard
-            st.session_state['master_results'] = pd.DataFrame(master_results)
-            st.session_state['individual_plots_data'] = individual_plots_data
-            if bg_vs_temp_data:
-                st.session_state['bg_combined'] = pd.DataFrame(np.vstack(bg_vs_temp_data), columns=['T', 'freq_Hz', 'background'])
-            
-            status_text.empty()
-            progress_bar.empty()
+            df_res = pd.DataFrame(master_results)
 
         # ==========================================
         # DASHBOARD VIEWS
         # ==========================================
-        if 'master_results' in st.session_state and not st.session_state['master_results'].empty:
-            df_res = st.session_state['master_results']
-            
+        if not df_res.empty:
             tab_trends, tab_individual, tab_data = st.tabs(["📈 Global Trends", "🔍 Individual Scans", "📊 Data Table & Export"])
             
             # --- TAB 1: GLOBAL TRENDS ---
-            
             with tab_trends:
                 # 1. All Q-Factors in Log Scale
                 st.subheader("Extracted Q-Factors vs Temperature (Log Scale)")
@@ -298,7 +298,7 @@ if uploaded_files:
                 fig_q_log.update_layout(
                     xaxis_title="Temperature (K)", 
                     yaxis_title="Q-Factor (Log Scale)", 
-                    yaxis_type="log",  # <--- This makes the Y-axis logarithmic
+                    yaxis_type="log",
                     hovermode="x unified", 
                     template="plotly_white"
                 )
@@ -315,7 +315,7 @@ if uploaded_files:
                     line=dict(color='#2ca02c', width=2),
                     error_y=dict(
                         type='data', 
-                        array=df_res['Q_in_err'], # <--- Pulls the calculated error margins
+                        array=df_res['Q_in_err'], 
                         visible=True,
                         color='#2ca02c',
                         thickness=1.5,
@@ -341,16 +341,14 @@ if uploaded_files:
                     template="plotly_white"
                 )
                 st.plotly_chart(fig_f, use_container_width=True)
-              
-
 
             # --- TAB 2: INDIVIDUAL SCANS ---
             with tab_individual:
                 st.markdown("Select a specific temperature from the dropdown below to view its interactive fit and background.")
                 selected_T = st.selectbox("Select Temperature (K)", options=df_res['T (K)'].unique())
                 
-                if selected_T in st.session_state['individual_plots_data']:
-                    plot_data = st.session_state['individual_plots_data'][selected_T]
+                if selected_T in individual_plots_data:
+                    plot_data = individual_plots_data[selected_T]
                     
                     col_p1, col_p2 = st.columns(2)
                     with col_p1:
@@ -372,10 +370,11 @@ if uploaded_files:
                     mime="text/csv"
                 )
                 
-                if 'bg_combined' in st.session_state:
+                if bg_vs_temp_data:
+                    df_bg_combined = pd.DataFrame(np.vstack(bg_vs_temp_data), columns=['T', 'freq_Hz', 'background'])
                     col_d2.download_button(
                         label="📥 Download Background vs Temp Data (CSV)",
-                        data=st.session_state['bg_combined'].to_csv(index=False),
+                        data=df_bg_combined.to_csv(index=False),
                         file_name="background_vs_temperature.csv",
                         mime="text/csv"
                     )
