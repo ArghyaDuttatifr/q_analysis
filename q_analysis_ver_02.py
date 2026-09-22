@@ -8,6 +8,7 @@ from functools import partial
 import os
 import plotly.graph_objects as go
 import plotly.express as px
+import plotly.colors as pcolors
 
 # ==========================================
 # PAGE CONFIGURATION
@@ -34,7 +35,7 @@ uploaded_files = st.sidebar.file_uploader(
 # Reset Button
 if st.sidebar.button("🗑️ Reset / Clear All Files", use_container_width=True):
     st.session_state["uploader_key"] += 1
-    # Clear any stored analysis data
+    # Clear stored analysis data
     for key in ['master_results', 'individual_plots_data', 'bg_combined']:
         if key in st.session_state:
             del st.session_state[key]
@@ -44,11 +45,11 @@ st.sidebar.header("2. Filtering & Options")
 FILE_PREFIX = st.sidebar.text_input("File Prefix Filter", value="S12")
 col1, col2 = st.sidebar.columns(2)
 
-# Set T_min to 2.0 K and T_max to 15.0 K by default
+# Default T_min = 2.0 K, T_max = 15.0 K
 T_min = col1.number_input("T min (K)", value=2.0, step=0.1)
 T_max = col2.number_input("T max (K)", value=15.0, step=0.1)
 
-# Disabled background subtraction by default (value=False)
+# Default Background Subtraction = False
 bg_correction = st.sidebar.checkbox("Enable Background Subtraction", value=False, 
     help="Uses the previous temperature's fitted background before fitting the next one.")
 
@@ -180,7 +181,7 @@ def create_plotly_bg(T, freq, background):
 
 
 # ==========================================
-# MAIN EXECUTION (AUTOMATIC RUN ON UPLOAD)
+# MAIN EXECUTION
 # ==========================================
 if uploaded_files:
     entries = []
@@ -202,14 +203,21 @@ if uploaded_files:
     if not entries:
         st.warning(f"No matching files found in T range [{T_min}, {T_max}] with prefix '{FILE_PREFIX}'.")
     else:
-        # Automatic processing without requiring a button click
-        with st.spinner(f"Analyzing {len(entries)} sweep dataset(s)..."):
+        st.success(f"Found {len(entries)} matching sweep dataset(s) ready for analysis.")
+        
+        # RUN ANALYSIS BUTTON
+        if st.button("🚀 Run Analysis", use_container_width=True, type="primary"):
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
             freq_prev, background_prev = None, None
             master_results = []
             bg_vs_temp_data = []
             individual_plots_data = {}
             
             for idx, (T, file) in enumerate(entries):
+                status_text.text(f"Processing T = {T} K ({idx+1}/{len(entries)})")
+                
                 # Read data
                 file.seek(0)
                 raw_data = np.genfromtxt(file, delimiter=',', skip_header=1)
@@ -267,7 +275,7 @@ if uploaded_files:
                     if bg_correction:
                         freq_prev, background_prev = freq_full, background_out
                         
-                    # Save arrays for later interactive plotting
+                    # Save arrays for interactive plotting
                     individual_plots_data[T] = {
                         "freq_fit": freq_fit,
                         "corrected_fit": corrected_fit,
@@ -277,13 +285,28 @@ if uploaded_files:
                     }
                     
                     bg_vs_temp_data.append(np.column_stack([np.full_like(freq_full[start_idx:end_idx], T), freq_full[start_idx:end_idx], background_out[start_idx:end_idx]]))
+                
+                progress_bar.progress((idx + 1) / len(entries))
             
-            df_res = pd.DataFrame(master_results)
+            # Store results in session state
+            st.session_state['master_results'] = pd.DataFrame(master_results)
+            st.session_state['individual_plots_data'] = individual_plots_data
+            if bg_vs_temp_data:
+                st.session_state['bg_combined'] = pd.DataFrame(np.vstack(bg_vs_temp_data), columns=['T', 'freq_Hz', 'background'])
+            else:
+                st.session_state['bg_combined'] = pd.DataFrame()
+            
+            status_text.empty()
+            progress_bar.empty()
+            st.success("✅ Analysis Complete!")
 
         # ==========================================
-        # DASHBOARD VIEWS
+        # DASHBOARD VIEWS (RENDER FROM SESSION STATE)
         # ==========================================
-        if not df_res.empty:
+        if 'master_results' in st.session_state and not st.session_state['master_results'].empty:
+            df_res = st.session_state['master_results']
+            individual_plots_data = st.session_state.get('individual_plots_data', {})
+            
             tab_trends, tab_individual, tab_data = st.tabs(["📈 Global Trends", "🔍 Individual Scans", "📊 Data Table & Export"])
             
             # --- TAB 1: GLOBAL TRENDS ---
@@ -342,6 +365,40 @@ if uploaded_files:
                 )
                 st.plotly_chart(fig_f, use_container_width=True)
 
+                # 4. Fitted Backgrounds across Temperatures
+                st.subheader("Fitted Backgrounds vs Frequency (All Temperatures)")
+                fig_bg_all = go.Figure()
+                
+                temps_sorted = sorted(individual_plots_data.keys())
+                num_temps = len(temps_sorted)
+                
+                if num_temps > 0:
+                    # Generate smooth color gradient across sorted temperatures
+                    norm_indices = np.linspace(0, 1, num_temps) if num_temps > 1 else [0.5]
+                    colors = pcolors.sample_colorscale('Viridis', norm_indices)
+                    
+                    for idx, T_val in enumerate(temps_sorted):
+                        pdata = individual_plots_data[T_val]
+                        freq_ghz = pdata["freq_full"] / 1e9
+                        bg_vals = pdata["bg_out"]
+                        
+                        fig_bg_all.add_trace(go.Scatter(
+                            x=freq_ghz,
+                            y=bg_vals,
+                            mode='lines',
+                            name=f"{T_val:.3f} K",
+                            line=dict(color=colors[idx], width=1.5)
+                        ))
+                    
+                    fig_bg_all.update_layout(
+                        xaxis_title="Frequency (GHz)",
+                        yaxis_title="Background Magnitude",
+                        hovermode="x unified",
+                        template="plotly_white",
+                        legend_title="Temperature (K)"
+                    )
+                    st.plotly_chart(fig_bg_all, use_container_width=True)
+
             # --- TAB 2: INDIVIDUAL SCANS ---
             with tab_individual:
                 st.markdown("Select a specific temperature from the dropdown below to view its interactive fit and background.")
@@ -370,11 +427,10 @@ if uploaded_files:
                     mime="text/csv"
                 )
                 
-                if bg_vs_temp_data:
-                    df_bg_combined = pd.DataFrame(np.vstack(bg_vs_temp_data), columns=['T', 'freq_Hz', 'background'])
+                if 'bg_combined' in st.session_state and not st.session_state['bg_combined'].empty:
                     col_d2.download_button(
                         label="📥 Download Background vs Temp Data (CSV)",
-                        data=df_bg_combined.to_csv(index=False),
+                        data=st.session_state['bg_combined'].to_csv(index=False),
                         file_name="background_vs_temperature.csv",
                         mime="text/csv"
                     )
