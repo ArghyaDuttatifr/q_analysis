@@ -72,7 +72,7 @@ $$\chi^2 = \frac{1}{\text{CHI2 NORM}} \sum_{{i}} \left( y{\text{obs}, i} - y{\te
 ## 📁 Input Data Format
 
 ### 1. File Naming Convention
-To enable automatic temperature parsing, filenames must include `_T_` followed by the temperature in Kelvin:
+To enable automatic temperature parsing, filenames must start with 'S12' ( as file prefix ) and must include `_T_` followed by the temperature in Kelvin:
 ```text
 S12_sample_01_T_0.050.txt  --> Parsed Temperature: 0.050 K
 S12_sample_01_T_4.200.txt  --> Parsed Temperature: 4.200 K
